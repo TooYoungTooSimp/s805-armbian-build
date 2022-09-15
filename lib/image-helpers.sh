@@ -33,6 +33,7 @@ mount_chroot()
 {
 
 	local target=$1
+	mount -t tmpfs tmpfs "${target}/tmp"
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
@@ -52,11 +53,12 @@ umount_chroot()
 
 	local target=$1
 	display_alert "Unmounting" "$target" "info"
-	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts
+	while grep -Eq "${target}/*(dev|proc|sys|tmp)" /proc/mounts
 	do
 		umount -l --recursive "${target}"/dev >/dev/null 2>&1
 		umount -l "${target}"/proc >/dev/null 2>&1
 		umount -l "${target}"/sys >/dev/null 2>&1
+		umount -l "${target}"/tmp >/dev/null 2>&1
 		sleep 5
 	done
 
@@ -71,7 +73,19 @@ unmount_on_exit()
 {
 
 	trap - INT TERM EXIT
+	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	display_alert "unmount_on_exit() called!" "$stacktrace" "err"
+	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
+		ERROR_DEBUG_SHELL=no # dont do it twice
+		display_alert "MOUNT" "${MOUNT}" "err"
+		display_alert "SDCARD" "${SDCARD}" "err"
+		display_alert "ERROR_DEBUG_SHELL=yes, starting a shell." "ERROR_DEBUG_SHELL" "err"
+		bash < /dev/tty || true
+	fi
+
 	umount_chroot "${SDCARD}/"
+	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
 	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
 	umount -l "${SDCARD}" >/dev/null 2>&1
 	umount -l "${MOUNT}"/boot >/dev/null 2>&1
@@ -79,7 +93,7 @@ unmount_on_exit()
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
 	losetup -d "${LOOP}" >/dev/null 2>&1
 	rm -rf --one-file-system "${SDCARD}"
-	exit_with_error "debootstrap-ng was interrupted"
+	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
 
 }
 
@@ -158,6 +172,13 @@ customize_image()
 
 	# for users that need to prepare files at host
 	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
+
+	call_extension_method "pre_customize_image" "image_tweaks_pre_customize" << 'PRE_CUSTOMIZE_IMAGE'
+*run before customize-image.sh*
+This hook is called after `customize-image-host.sh` is called, but before the overlay is mounted.
+It thus can be used for the same purposes as `customize-image-host.sh`.
+PRE_CUSTOMIZE_IMAGE
+
 	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
 	chmod +x "${SDCARD}"/tmp/customize-image.sh
 	mkdir -p "${SDCARD}"/tmp/overlay
@@ -172,6 +193,10 @@ customize_image()
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
 	fi
 
+	call_extension_method "post_customize_image" "image_tweaks_post_customize" << 'POST_CUSTOMIZE_IMAGE'
+*post customize-image.sh hook*
+Run after the customize-image.sh script is run, and the overlay is unmounted.
+POST_CUSTOMIZE_IMAGE
 }
 
 
@@ -197,7 +222,6 @@ install_deb_chroot()
 	display_alert "Installing${desc}" "${name/\/root\//}"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	# when building in bulk from remote, lets make sure we have up2date index
-	[[ $BUILD_ALL == yes && ${variant} == remote ]] && chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get $apt_extra -yqq update"
 	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq $apt_extra --no-install-recommends install $name" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	[[ $? -ne 0 ]] && exit_with_error "Installation of $name failed" "${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	[[ ${variant} == remote && ${transfer} == yes ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/*.deb ${DEB_STORAGE}/

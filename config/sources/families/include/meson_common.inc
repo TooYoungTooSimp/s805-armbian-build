@@ -1,38 +1,52 @@
 ARCH=armhf
-BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
-BOOTBRANCH='branch:odroidc-v2011.03'
-BOOTDIR='u-boot-odroidc1'
-UBOOT_COMPILER="arm-linux-gnueabihf-"
-UBOOT_USE_GCC='< 4.9'
-BOOTSCRIPT="boot-odroid-c1.ini:boot.ini"
-SERIALCON="ttyAML0"
-UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
-SRC_LOADADDR='LOADADDR=0x00208000'
-KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
+KERNEL_IMAGE_TYPE=uImage
+SRC_LOADADDR='LOADADDR=0x00208000'
+
+SERIALCON="ttyAML0"
+
 CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=ondemand
 
+SKIP_BOOTSPLASH="yes"
+
+case $BOARD in
+	odroidc1)
+
+		BOOTDIR='u-boot-odroidc1'
+		BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
+		BOOTBRANCH='branch:odroidc-v2011.03'
+
+		UBOOT_COMPILER="arm-linux-gnueabihf-"
+		UBOOT_USE_GCC='< 4.9'
+
+		UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
+
+	;;
+esac
+
 case $BRANCH in
 	legacy)
 
-		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-        ;;
+    ;;
+
 	current)
 
-		KERNELBRANCH="branch:linux-5.10.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELBRANCH="branch:linux-5.15.y"
+		KERNELPATCHDIR='meson-'$BRANCH
 
-	;;
+	  ;;
+
 	edge)
 
-		KERNELBRANCH="branch:linux-5.11.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELBRANCH="branch:linux-5.18.y"
+		KERNELPATCHDIR='meson-'$BRANCH
 
-	;;
+	  ;;
 esac
 
 write_uboot_platform()
@@ -50,5 +64,13 @@ family_tweaks()
 
 family_tweaks_bsp()
 {
-	:	
+	mkdir -p "$destination/etc/X11/xorg.conf.d"
+	cat <<-EOF >"$destination/etc/X11/xorg.conf.d/02-driver.conf"
+	Section "OutputClass"
+		Identifier "Amlogic"
+		MatchDriver "meson"
+		Driver "modesetting"
+		Option "PrimaryGPU" "true"
+	EndSection
+	EOF
 }
