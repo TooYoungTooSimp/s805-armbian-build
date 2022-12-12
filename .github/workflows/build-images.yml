@@ -70,7 +70,7 @@ jobs:
     runs-on: [ubuntu-latest]
     steps:
       - name: Purge
-        uses: dev-drprasad/delete-older-releases@v0.2.0
+        uses: dev-drprasad/delete-older-releases@v0.2.1
         with:
           keep_latest: 7
           delete_tag_pattern: trunk
